@@ -1,1 +1,86 @@
 @import "tailwindcss";
+
+/* ─── Dark-theme base ──────────────────────────────────────────────────────── */
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html { color-scheme: dark; }
+
+  body {
+    background-color: #09090b; /* zinc-950 */
+    color: #f4f4f5;            /* zinc-100 */
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* ─── Rotating glow-border card ─────────────────────────────────────────────
+   Usage:
+     <div class="glow-card">
+       <div class="glow-card-inner p-8"> … </div>
+     </div>
+   The ::before spins a conic-gradient behind the card; the inner div
+   provides the opaque background that hides the gradient except at the edges.
+   overflow:hidden clips the oversized spinning element.
+─────────────────────────────────────────────────────────────────────────────── */
+@keyframes glow-spin {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to   { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+.glow-card {
+  position: relative;
+  padding: 1px;
+  border-radius: 1rem;
+  overflow: hidden;
+  background: #27272a; /* zinc-800 — static border fallback */
+}
+
+.glow-card::before {
+  content: '';
+  position: absolute;
+  width: 300%;
+  aspect-ratio: 1 / 1;
+  top:  50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(0deg);
+  background: conic-gradient(
+    from 0deg,
+    #6366F1,
+    #8B5CF6,
+    #FE8BBB,
+    transparent 50%,
+    #6366F1
+  );
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.glow-card:hover::before,
+.glow-card:focus-within::before {
+  opacity: 1;
+  animation: glow-spin 4s linear infinite;
+}
+
+.glow-card-inner {
+  position: relative;
+  z-index: 1;
+  border-radius: calc(1rem - 1px);
+  background: #18181b; /* zinc-900 */
+}
+
+/* ─── Circular score gauge animation ────────────────────────────────────────── */
+.score-ring {
+  transition: stroke-dashoffset 1.1s cubic-bezier(0.4, 0, 0.2, 1),
+              stroke 0.5s ease;
+}
+
+/* ─── Reduced-motion overrides ──────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .glow-card::before {
+    animation: none !important;
+    opacity: 0.6;
+  }
+  .score-ring {
+    transition: none;
+  }
+}
