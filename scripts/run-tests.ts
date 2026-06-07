@@ -125,7 +125,7 @@ Whether you're on the trail or at the office, this insulated water bottle keeps 
       "This insulated water bottle is the best insulated water bottle. Buy this insulated water bottle because our insulated water bottle is a great insulated water bottle. Insulated water bottle for everyone.",
     runGemini: false,
     expect: {
-      scoreMax: 60, // prompt target <60; engine may give slightly more — surfaced in report
+      scoreMax: 45, // hard cap applied by engine when stuffing fires
       rules: [
         { rule: "keywordStuffing", status: "fail" }, // CRITICAL: must fail
       ],
@@ -220,13 +220,16 @@ function sleep(ms: number) {
 async function callGeminiWithRetry(
   title: string,
   description: string,
-  keyword: string
+  keyword: string,
+  maxRetries = 2
 ): Promise<KeywordGaps> {
-  const result = await generateKeywordGaps(title, description, keyword);
-  if (result.error?.toLowerCase().includes("rate limit")) {
-    console.log("\n    ⏳ Rate limit hit — waiting 60 s before retry…");
+  let result = await generateKeywordGaps(title, description, keyword);
+  let attempt = 0;
+  while (result.error?.toLowerCase().includes("rate limit") && attempt < maxRetries) {
+    attempt++;
+    console.log(`\n    ⏳ Rate limit — waiting 60 s (retry ${attempt}/${maxRetries})…`);
     await sleep(60_000);
-    return generateKeywordGaps(title, description, keyword);
+    result = await generateKeywordGaps(title, description, keyword);
   }
   return result;
 }
@@ -496,7 +499,7 @@ async function main() {
   const hasKey =
     !!process.env.GEMINI_API_KEY &&
     process.env.GEMINI_API_KEY !== "your_gemini_api_key_here";
-  const model = process.env.GEMINI_MODEL ?? "gemini-2.0-flash-lite";
+  const model = process.env.GEMINI_MODEL ?? "gemini-2.5-flash-lite";
 
   console.log("\n🧞  ListingGenie — Automated Audit Test Suite");
   console.log(`    Date  : ${new Date().toISOString()}`);
@@ -516,7 +519,7 @@ async function main() {
     // Gemini keyword gaps (throttled: 2.5 s between calls)
     let gaps: KeywordGaps | null = null;
     if (tc.runGemini) {
-      if (geminiCallIdx > 0) await sleep(2500);
+      if (geminiCallIdx > 0) await sleep(4000);
       process.stdout.write("[Gemini…] ");
       gaps = hasKey
         ? await callGeminiWithRetry(tc.title, tc.description, tc.keyword)

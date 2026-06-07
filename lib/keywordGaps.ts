@@ -85,9 +85,9 @@ async function callGemini(
   keyword: string,
   apiKey: string
 ): Promise<KeywordGaps> {
-  // gemini-2.0-flash-lite is the current free-tier model (gemini-1.5-flash was removed from v1beta)
-  // Override via GEMINI_MODEL env var if needed (e.g. gemini-2.0-flash)
-  const model = process.env.GEMINI_MODEL ?? "gemini-2.0-flash-lite";
+  // gemini-2.5-flash-lite is the current free-tier model on v1beta
+  // Override via GEMINI_MODEL env var if needed (e.g. gemini-2.5-flash)
+  const model = process.env.GEMINI_MODEL ?? "gemini-2.5-flash-lite";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const res = await fetch(url, {

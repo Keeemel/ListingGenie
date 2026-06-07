@@ -2,21 +2,21 @@
 
 | | |
 |---|---|
-| **Date** | 2026-06-07 15:35:29 UTC |
-| **Gemini model** | `gemini-2.0-flash-lite` |
+| **Date** | 2026-06-07 16:06:22 UTC |
+| **Gemini model** | `gemini-2.5-flash-lite` |
 | **API key** | present ✅ |
 
 ## Summary
 
-**4/6 cases conform** — 2 ⚠️ minor discrepancy, 0 ❌ failure
+**6/6 cases conform** — 0 ⚠️ minor discrepancy, 0 ❌ failure
 
 | # | Case | Score | Grade | Expected | Verdict |
 |--:|------|------:|:-----:|----------|:-------:|
 | 1 | `bad-bottle` | 19 | D | < 35, grade D | ✅ |
 | 2 | `good-bottle` | 91 | A | ≥ 80 | ✅ |
-| 3 | `stuffed` | 63 | B | < 60 | ⚠️ |
+| 3 | `stuffed` | 45 | C | < 45 | ✅ |
 | 4 | `candle` | 19 | D | grade D | ✅ |
-| 5 | `earbuds` | 63 | B | 45–70 | ⚠️ |
+| 5 | `earbuds` | 55 | C | 45–70 | ✅ |
 | 6 | `perfect` | 100 | A | = 100, grade A | ✅ |
 
 ## Detailed Results
@@ -82,7 +82,7 @@
 
 ### CAS 3 — stuffed (keyword stuffing — CRITICAL check)
 
-**Score:** 63/100 &nbsp; **Grade:** B &nbsp; **Verdict:** ⚠️
+**Score:** 45/100 &nbsp; **Grade:** C &nbsp; **Verdict:** ✅
 
 | Rule | Expected | Actual | Pts | Match |
 |------|:--------:|:------:|----:|:-----:|
@@ -101,10 +101,6 @@
 - ✓ `readability` **(pass, 15 pts)** — Good readability (avg 10 words/sentence).
 
 </details>
-
-**Discrepancies:**
-
-- ❗ Score 63 > expected max 60
 
 ---
 
@@ -138,13 +134,17 @@
 
 **Missing Keywords (Gemini):**
 
-_error: Rate limit reached — wait ~1 minute and audit again. (Free tier: 30 req/min)_
+  - `lavender scented candle for relaxation` — Shoppers are looking for a candle specifically for relaxation purposes.
+  - `natural soy wax candle lavender` — Buyers want to ensure the candle is made from natural soy wax and has a lavender scent.
+  - `long burning lavender candle` — Customers are interested in the candle's burn time and its lavender fragrance.
+  - `lavender aromatherapy candle gift` — People are searching for lavender candles as gifts with aromatherapy benefits.
+  - `calming lavender home fragrance` — Shoppers seek a calming scent for their home environment, specifically lavender.
 
 ---
 
 ### CAS 5 — earbuds (single-sentence wall of text — readability stress test)
 
-**Score:** 63/100 &nbsp; **Grade:** B &nbsp; **Verdict:** ⚠️
+**Score:** 55/100 &nbsp; **Grade:** C &nbsp; **Verdict:** ✅
 
 | Rule | Expected | Actual | Pts | Match |
 |------|:--------:|:------:|----:|:-----:|
@@ -154,7 +154,7 @@ _error: Rate limit reached — wait ~1 minute and audit again. (Free tier: 30 re
 | `descriptionLength` | pass | pass | 20 | ✅ |
 | `structure` | warn | warn | 0 | ✅ |
 | `keywordStuffing` | pass | pass | 15 | ✅ |
-| `readability` | fail | skipped | — | ⚠️ |
+| `readability` | fail | fail | 0 | ✅ |
 
 <details><summary>All issues from engine</summary>
 
@@ -166,12 +166,10 @@ _error: Rate limit reached — wait ~1 minute and audit again. (Free tier: 30 re
 - ⚠ `structure` **(warn, 0 pts)** — Description reads as a wall of text with no visible structure.
   > *Break content into bullet points (• or -) and short paragraphs to improve scannability.*
 - ✓ `keywordStuffing` **(pass, 15 pts)** — No keyword stuffing detected.
+- ✗ `readability` **(fail, 0 pts)** — Average sentence is 78 words — extremely difficult to read.
+  > *Break these long sentences aggressively. Use bullet points for lists. Target under 20 words per sentence.*
 
 </details>
-
-**Discrepancies:**
-
-- ❗ Rule "readability": expected FAIL, got SKIPPED
 
 ---
 
@@ -205,11 +203,8 @@ _error: Rate limit reached — wait ~1 minute and audit again. (Free tier: 30 re
 
 ## Regressions / Écarts
 
-- **`stuffed`** — Score 63 > expected max 60
-- **`earbuds`** — Rule "readability": expected FAIL, got SKIPPED
+✅ No discrepancies — all expected behaviors match exactly.
 
 ## Recommendations
 
-1. **Fix `minSentences` guard in `ruleReadability()`** (`lib/auditRules.ts`): CAS 5 has a 440-char, ~90-word description that is a single run-on sentence. The `minSentences < 3` guard silently skips it (returns `null`) instead of firing FAIL. **Fix:** remove the `minSentences` guard — the `minDescriptionLength` guard already protects against very short texts. A description long enough to pass the length check should always be evaluated for readability.
-
-2. **Re-calibrate stuffing penalty** (`CONFIG.keywordStuffing.points` in `lib/auditRules.ts`): CAS 3 (heavy stuffing ×9) scores 63/100 (grade B) because keyword-presence and readability rules compensate. Consider: (a) penalising stuffing with negative points or (b) capping the final score at 55 when `keywordStuffing.status === "fail"`. Target: a stuffed listing should never exceed grade C.
+1. All critical paths pass. Consider extending the suite with boundary cases: empty title, 2001-char description (above ideal max), keyword density exactly at 3%, and a description with exactly 3 line-breaks but no bullet characters.

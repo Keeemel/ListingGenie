@@ -42,6 +42,7 @@ export const CONFIG = {
     maxKeywordDensityPercent: 3,   // keyword token density % in title+desc combined
     maxWordRepetitions: 6,         // max times any single non-stop word may repeat
     minWordLength: 4,
+    scoreCap: 45,                  // hard ceiling applied to final score when stuffing fires
     points: { pass: 15, fail: 0 },
   },
   readability: {
@@ -289,7 +290,7 @@ function ruleKeywordStuffing(
 //   - Skip rule when description is too short or has too few sentences
 //   - Graduated severity: warn (30–49 words/sentence) vs fail (50+ words/sentence)
 function ruleReadability(description: string): Issue | null {
-  const { minDescriptionLength, minSentences, warnThreshold, failThreshold, points } =
+  const { minDescriptionLength, warnThreshold, failThreshold, points } =
     CONFIG.readability;
 
   if (description.trim().length < minDescriptionLength) return null;
@@ -305,7 +306,8 @@ function ruleReadability(description: string): Issue | null {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  if (sentences.length < minSentences) return null;
+  // If prose is entirely empty after stripping bullets, skip
+  if (sentences.length === 0) return null;
 
   const wordCount = prose.split(/\s+/).filter(Boolean).length;
   const avg = wordCount / sentences.length;
@@ -393,10 +395,17 @@ export function runOnPageAudit(
     0
   );
 
-  const score =
+  const rawScore =
     possible > 0
       ? Math.round(Math.min(100, Math.max(0, (earned / possible) * 100)))
       : 0;
+
+  // Hard cap: a stuffed listing is capped regardless of how other rules score
+  const stuffingIssue = issues.find((i) => i.rule === "keywordStuffing");
+  const score =
+    stuffingIssue?.status === "fail"
+      ? Math.min(rawScore, CONFIG.keywordStuffing.scoreCap)
+      : rawScore;
 
   return { score, issues };
 }
