@@ -25,21 +25,29 @@ Rules:
 }
 
 // ============================================================
-// JSON parser — handles raw JSON and ```json fences
+// JSON parser — handles raw JSON, ```json fences, and partial wrapping
 // ============================================================
 function parseGapsJson(raw: string): KeywordGaps {
-  const cleaned = raw
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/```\s*$/, "")
-    .trim();
+  // Strategy 1: extract content from ```json ... ``` or ``` ... ``` (multiline)
+  const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  let candidate = fenceMatch ? fenceMatch[1].trim() : raw.trim();
+
+  // Strategy 2: if candidate doesn't start with {, find the first JSON object
+  if (!candidate.startsWith("{")) {
+    const objectMatch = candidate.match(/\{[\s\S]*\}/);
+    if (objectMatch) candidate = objectMatch[0];
+  }
 
   try {
-    const parsed: unknown = JSON.parse(cleaned);
-    if (typeof parsed !== "object" || parsed === null) throw new Error("not object");
+    const parsed: unknown = JSON.parse(candidate);
+    if (typeof parsed !== "object" || parsed === null)
+      throw new Error("parsed value is not an object");
 
     const obj = parsed as Record<string, unknown>;
 
-    const suggestedKeywords: SuggestedKeyword[] = Array.isArray(obj.suggestedKeywords)
+    const suggestedKeywords: SuggestedKeyword[] = Array.isArray(
+      obj.suggestedKeywords
+    )
       ? (obj.suggestedKeywords as unknown[])
           .slice(0, 5)
           .map((k) => {
@@ -56,13 +64,20 @@ function parseGapsJson(raw: string): KeywordGaps {
       mainKeywordHasVolume: Boolean(obj.mainKeywordHasVolume),
       suggestedKeywords,
     };
-  } catch {
+  } catch (err) {
+    // Bug 6 fix: log the raw response so the operator can diagnose parse failures
+    console.error(
+      "[keywordGaps] JSON parse failed:",
+      err instanceof Error ? err.message : String(err),
+      "\nRaw response (first 600 chars):",
+      raw.slice(0, 600)
+    );
     return { suggestedKeywords: [], error: "Could not parse LLM response." };
   }
 }
 
 // ============================================================
-// Gemini provider (free tier)
+// Gemini provider (free tier — gemini-1.5-flash)
 // ============================================================
 async function callGemini(
   title: string,
@@ -70,15 +85,22 @@ async function callGemini(
   keyword: string,
   apiKey: string
 ): Promise<KeywordGaps> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  // gemini-2.0-flash-lite is the current free-tier model (gemini-1.5-flash was removed from v1beta)
+  // Override via GEMINI_MODEL env var if needed (e.g. gemini-2.0-flash)
+  const model = process.env.GEMINI_MODEL ?? "gemini-2.0-flash-lite";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    // 10-second hard timeout to avoid hanging requests
+    signal: AbortSignal.timeout(10_000),
     body: JSON.stringify({
       contents: [{ parts: [{ text: buildPrompt(title, description, keyword) }] }],
       generationConfig: {
         temperature: 0.3,
+        // Instructs Gemini to return JSON directly (no fences); our parser handles
+        // fences as a fallback in case an older API version ignores this field.
         responseMimeType: "application/json",
       },
     }),
@@ -86,16 +108,36 @@ async function callGemini(
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Gemini API ${res.status}: ${body.slice(0, 200)}`);
+    if (res.status === 429) {
+      throw new Error(
+        `Gemini rate limit reached (429). Wait ~1 minute and try again. Free tier: 30 req/min.`
+      );
+    }
+    throw new Error(`Gemini API ${res.status}: ${body.slice(0, 300)}`);
   }
 
   const data = (await res.json()) as {
     candidates?: Array<{
       content?: { parts?: Array<{ text?: string }> };
+      finishReason?: string;
     }>;
+    promptFeedback?: { blockReason?: string };
   };
 
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  // Log the full candidate finish reason to diagnose safety-block / empty responses
+  const candidate = data.candidates?.[0];
+  if (!candidate) {
+    const blockReason = data.promptFeedback?.blockReason ?? "unknown";
+    throw new Error(`Gemini returned no candidates. blockReason: ${blockReason}`);
+  }
+
+  const text = candidate.content?.parts?.[0]?.text ?? "";
+  if (!text) {
+    throw new Error(
+      `Gemini candidate has no text. finishReason: ${candidate.finishReason ?? "unknown"}`
+    );
+  }
+
   return parseGapsJson(text);
 }
 
@@ -118,6 +160,10 @@ export async function generateKeywordGaps(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[keywordGaps] LLM call failed:", message);
-    return { suggestedKeywords: [], error: "Keyword suggestions unavailable. Check your GEMINI_API_KEY." };
+    // Surface rate-limit message to the UI so the user knows to wait
+    const userMessage = message.startsWith("Gemini rate limit")
+      ? "Rate limit reached — wait ~1 minute and audit again. (Free tier: 30 req/min)"
+      : "Keyword suggestions unavailable — check GEMINI_API_KEY or server logs.";
+    return { suggestedKeywords: [], error: userMessage };
   }
 }

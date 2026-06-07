@@ -1,5 +1,17 @@
 import { Grade, Issue } from "@/types/audit";
 
+// Common English stop-words excluded from single-word repetition checks
+const STOP_WORDS = new Set([
+  "the", "a", "an", "and", "or", "but", "for", "nor", "so", "yet",
+  "of", "in", "on", "at", "to", "by", "up", "as", "is", "it", "its",
+  "be", "am", "are", "was", "were", "been", "being", "do", "does",
+  "did", "will", "would", "shall", "should", "may", "might", "can",
+  "could", "this", "that", "these", "those", "with", "from", "into",
+  "than", "then", "when", "also", "not", "you", "your", "we", "our",
+  "they", "their", "have", "has", "had", "all", "more", "use", "make",
+  "very", "just", "any", "each", "both", "such", "only", "other",
+]);
+
 // ============================================================
 // CONFIG — all weights and thresholds in one place
 // ============================================================
@@ -21,18 +33,23 @@ export const CONFIG = {
     points: { pass: 20, warn: 10, fail: 0 },
   },
   structure: {
+    minDescriptionLength: 300, // rule is skipped below this threshold
     minLineBreaks: 3,
-    points: { pass: 10, warn: 0 },
+    points: { pass: 15, warn: 0 }, // increased from 10
   },
   keywordStuffing: {
-    maxRepetitions: 6,
-    maxDensityPercent: 4,
+    maxKeywordOccurrences: 4,      // exact keyword phrase occurrences in title+desc combined
+    maxKeywordDensityPercent: 3,   // keyword token density % in title+desc combined
+    maxWordRepetitions: 6,         // max times any single non-stop word may repeat
     minWordLength: 4,
     points: { pass: 15, fail: 0 },
   },
   readability: {
-    maxAvgWordsPerSentence: 30,
-    points: { pass: 10, warn: 0 },
+    minDescriptionLength: 150, // rule is skipped below this character count
+    minSentences: 3,           // rule is skipped below this sentence count
+    warnThreshold: 30,         // avg words/sentence → warn
+    failThreshold: 50,         // avg words/sentence → fail (harder penalty)
+    points: { pass: 15, warn: 5, fail: 0 }, // increased from 10; added fail tier
   },
 } as const;
 
@@ -177,7 +194,10 @@ function ruleDescriptionLength(description: string): Issue {
   };
 }
 
-function ruleStructure(description: string): Issue {
+// Bug 3 fix: skip rule when description is short (avoids false "wall of text" on thin copy)
+function ruleStructure(description: string): Issue | null {
+  if (description.trim().length < CONFIG.structure.minDescriptionLength) return null;
+
   const hasBullets = /^[ \t]*[•\-*]\s/m.test(description);
   const lineBreakCount = (description.match(/\n/g) ?? []).length;
   const hasStructure = hasBullets || lineBreakCount >= CONFIG.structure.minLineBreaks;
@@ -195,84 +215,126 @@ function ruleStructure(description: string): Issue {
   };
 }
 
-function ruleKeywordStuffing(description: string, keyword: string): Issue {
-  const words = description
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean);
+// Bug 1 fix: analyzes title+description combined; exact phrase occurrence count;
+// stop-word-aware single-word repetition check.
+function ruleKeywordStuffing(
+  title: string,
+  description: string,
+  keyword: string
+): Issue {
+  const fullText = `${title} ${description}`;
+  const fullLower = fullText.toLowerCase();
+  const cfg = CONFIG.keywordStuffing;
 
-  // Count word frequencies (ignore short words)
+  // (a & b) Exact keyword phrase with word-boundary match (avoids "test" hitting "testing")
+  let keywordStuffed = false;
+  let keywordCount = 0;
+
+  if (keyword.trim()) {
+    const kw = keyword.toLowerCase().trim();
+    // Escape regex metacharacters, then anchor with word boundaries
+    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`\\b${escaped}\\b`, "gi");
+    const matches = fullText.match(regex);
+    keywordCount = matches ? matches.length : 0;
+
+    const totalWords = fullLower.split(/\s+/).filter(Boolean).length;
+    // Density = phrase_occurrences / total_word_tokens (no kwWords multiplier —
+    // a 4-word phrase appearing once in 100 words is 1%, not 4%)
+    const density = totalWords > 0 ? (keywordCount / totalWords) * 100 : 0;
+
+    keywordStuffed =
+      keywordCount > cfg.maxKeywordOccurrences ||
+      density > cfg.maxKeywordDensityPercent;
+  }
+
+  // (c) Any single non-stop word repeated too many times
+  const tokens = fullLower.split(/\s+/).filter(Boolean);
   const freq: Record<string, number> = {};
-  for (const raw of words) {
+  for (const raw of tokens) {
     const w = raw.replace(/[^a-z0-9]/g, "");
-    if (w.length >= CONFIG.keywordStuffing.minWordLength) {
+    if (w.length >= cfg.minWordLength && !STOP_WORDS.has(w)) {
       freq[w] = (freq[w] ?? 0) + 1;
     }
   }
-
   const topEntry = Object.entries(freq).sort((a, b) => b[1] - a[1])[0];
-  const overRepeated =
-    topEntry && topEntry[1] > CONFIG.keywordStuffing.maxRepetitions;
+  const wordStuffed = topEntry != null && topEntry[1] > cfg.maxWordRepetitions;
 
-  let densityHigh = false;
-  if (keyword.trim() && words.length > 0) {
-    const kw = keyword.toLowerCase().trim();
-    const count = words.filter((w) => w.includes(kw)).length;
-    densityHigh =
-      (count / words.length) * 100 > CONFIG.keywordStuffing.maxDensityPercent;
+  const stuffed = keywordStuffed || wordStuffed;
+
+  let message: string;
+  if (!stuffed) {
+    message = "No keyword stuffing detected.";
+  } else if (keywordStuffed && keyword.trim()) {
+    message = `Main keyword "${keyword}" appears ${keywordCount}× (limit: ${cfg.maxKeywordOccurrences}).`;
+  } else if (wordStuffed && topEntry) {
+    message = `"${topEntry[0]}" repeats ${topEntry[1]} times across title + description.`;
+  } else {
+    message = `Keyword density exceeds ${cfg.maxKeywordDensityPercent}% — over-optimized.`;
   }
-
-  const stuffed = overRepeated || densityHigh;
 
   return {
     rule: "keywordStuffing",
     status: stuffed ? "fail" : "pass",
-    message: stuffed
-      ? overRepeated
-        ? `"${topEntry[0]}" repeats ${topEntry[1]} times — looks like keyword stuffing.`
-        : `Main keyword density exceeds ${CONFIG.keywordStuffing.maxDensityPercent}% — over-optimized.`
-      : "No keyword stuffing detected.",
+    message,
     fixTip: stuffed
       ? "Use synonyms and related phrases instead of repeating the same word. Natural copy ranks better."
       : "",
-    points: stuffed
-      ? CONFIG.keywordStuffing.points.fail
-      : CONFIG.keywordStuffing.points.pass,
+    points: stuffed ? cfg.points.fail : cfg.points.pass,
   };
 }
 
-function ruleReadability(description: string): Issue {
-  const sentences = description
+// Bug 2 & 4 & 5 fix:
+//   - Exclude bullet/list lines before computing avg sentence length
+//   - Skip rule when description is too short or has too few sentences
+//   - Graduated severity: warn (30–49 words/sentence) vs fail (50+ words/sentence)
+function ruleReadability(description: string): Issue | null {
+  const { minDescriptionLength, minSentences, warnThreshold, failThreshold, points } =
+    CONFIG.readability;
+
+  if (description.trim().length < minDescriptionLength) return null;
+
+  // Strip bullet/list lines — they have no terminal punctuation and skew the avg
+  const prose = description
+    .split("\n")
+    .filter((line) => !/^[ \t]*[•\-*]\s/.test(line))
+    .join(" ");
+
+  const sentences = prose
     .split(/[.!?]+/)
     .map((s) => s.trim())
     .filter(Boolean);
 
-  if (sentences.length === 0) {
+  if (sentences.length < minSentences) return null;
+
+  const wordCount = prose.split(/\s+/).filter(Boolean).length;
+  const avg = wordCount / sentences.length;
+
+  if (avg >= failThreshold) {
+    return {
+      rule: "readability",
+      status: "fail",
+      message: `Average sentence is ${Math.round(avg)} words — extremely difficult to read.`,
+      fixTip:
+        "Break these long sentences aggressively. Use bullet points for lists. Target under 20 words per sentence.",
+      points: points.fail,
+    };
+  }
+  if (avg >= warnThreshold) {
     return {
       rule: "readability",
       status: "warn",
-      message: "Could not detect sentence structure — missing punctuation?",
-      fixTip: "Write complete sentences ending with . ! or ?",
-      points: 0,
+      message: `Average sentence is ${Math.round(avg)} words — hard to skim on mobile.`,
+      fixTip: "Break long sentences into shorter ones. Aim for under 20 words per sentence.",
+      points: points.warn,
     };
   }
-
-  const wordCount = description.split(/\s+/).filter(Boolean).length;
-  const avg = wordCount / sentences.length;
-  const tooLong = avg > CONFIG.readability.maxAvgWordsPerSentence;
-
   return {
     rule: "readability",
-    status: tooLong ? "warn" : "pass",
-    message: tooLong
-      ? `Average sentence is ${Math.round(avg)} words — hard to skim on mobile.`
-      : `Good readability (avg ${Math.round(avg)} words/sentence).`,
-    fixTip: tooLong
-      ? "Break long sentences into shorter ones. Aim for under 20 words per sentence."
-      : "",
-    points: tooLong
-      ? CONFIG.readability.points.warn
-      : CONFIG.readability.points.pass,
+    status: "pass",
+    message: `Good readability (avg ${Math.round(avg)} words/sentence).`,
+    fixTip: "",
+    points: points.pass,
   };
 }
 
@@ -287,10 +349,14 @@ export function runOnPageAudit(
   // Guard: empty fields get an immediate low score
   const emptyIssues = ruleMissingFields(title, description);
   if (emptyIssues.length > 0) {
-    return { score: Math.max(0, 100 - emptyIssues.length * 30), issues: emptyIssues };
+    return {
+      score: Math.max(0, 100 - emptyIssues.length * 30),
+      issues: emptyIssues,
+    };
   }
 
   const issues: Issue[] = [];
+
   issues.push(ruleTitleLength(title));
 
   const kwTitle = ruleKeywordInTitle(title, mainKeyword);
@@ -300,11 +366,17 @@ export function runOnPageAudit(
   if (kwDesc) issues.push(kwDesc);
 
   issues.push(ruleDescriptionLength(description));
-  issues.push(ruleStructure(description));
-  issues.push(ruleKeywordStuffing(description, mainKeyword));
-  issues.push(ruleReadability(description));
 
-  // Normalize to 100 based on max achievable points for rules that ran
+  const structureIssue = ruleStructure(description);
+  if (structureIssue) issues.push(structureIssue);
+
+  // Pass title to stuffing rule so it analyses full listing corpus
+  issues.push(ruleKeywordStuffing(title, description, mainKeyword));
+
+  const readabilityIssue = ruleReadability(description);
+  if (readabilityIssue) issues.push(readabilityIssue);
+
+  // Normalize score to 100 using only the points of rules that actually ran
   const maxPointsMap: Record<string, number> = {
     titleLength: CONFIG.titleLength.points.pass,
     keywordInTitle: CONFIG.keywordInTitle.points.pass,
@@ -322,7 +394,9 @@ export function runOnPageAudit(
   );
 
   const score =
-    possible > 0 ? Math.round(Math.min(100, Math.max(0, (earned / possible) * 100))) : 0;
+    possible > 0
+      ? Math.round(Math.min(100, Math.max(0, (earned / possible) * 100)))
+      : 0;
 
   return { score, issues };
 }
