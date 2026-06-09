@@ -6,7 +6,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 const variants = cva(
   [
     "relative inline-flex items-center justify-center overflow-hidden",
-    "font-bold tracking-wide transition-all duration-300",
+    "font-semibold text-white tracking-wide transition-all duration-300",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500",
     "focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
     "disabled:pointer-events-none disabled:opacity-40",
@@ -18,8 +18,8 @@ const variants = cva(
         primary: [
           "bg-gradient-to-r from-indigo-600 via-violet-600 to-indigo-600",
           "bg-[length:200%_100%] bg-left",
-          "text-white shadow-lg shadow-indigo-500/20",
-          "hover:bg-right hover:shadow-indigo-500/40 hover:scale-[1.02]",
+          "shadow-lg shadow-indigo-500/25",
+          "hover:bg-right hover:shadow-indigo-500/45 hover:scale-[1.02]",
           "active:scale-[0.98]",
         ].join(" "),
         ghost: [
@@ -28,10 +28,10 @@ const variants = cva(
         ].join(" "),
       },
       size: {
-        sm: "rounded-lg  px-4   py-2    text-sm",
+        sm: "rounded-lg  px-4   py-1.5  text-sm",
         md: "rounded-xl  px-5   py-2.5  text-sm",
         lg: "rounded-xl  px-6   py-3    text-base",
-        xl: "rounded-2xl px-8   py-4    text-base",
+        xl: "rounded-2xl px-8   py-3    text-base",
       },
     },
     defaultVariants: { variant: "primary", size: "md" },

@@ -10,6 +10,14 @@
     "test": "tsx scripts/run-tests.ts"
   },
   "dependencies": {
+    "@number-flow/react": "^0.6.0",
+    "@radix-ui/react-avatar": "^1.1.12",
+    "@radix-ui/react-dialog": "^1.1.16",
+    "@radix-ui/react-label": "^2.1.9",
+    "@radix-ui/react-separator": "^1.1.9",
+    "@radix-ui/react-slot": "^1.2.5",
+    "@supabase/ssr": "^0.10.3",
+    "@supabase/supabase-js": "^2.108.0",
     "@types/node": "^25.9.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -20,6 +28,7 @@
     "next": "^16.2.7",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "stripe": "^22.2.0",
     "three": "^0.184.0",
     "typescript": "^6.0.3"
   },

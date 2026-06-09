@@ -67,7 +67,7 @@
   position: relative;
   z-index: 1;
   border-radius: calc(1.125rem - 1px);
-  background: #18181b;   /* zinc-900 */
+  background: #0d0d10;   /* near-zinc-950, slightly off-black */
 }
 
 /* ─── Score ring CSS transition ─────────────────────────────────────────────── */
@@ -76,6 +76,25 @@
     stroke-dashoffset 1.2s cubic-bezier(0.33, 1, 0.68, 1),
     stroke 0.5s ease;
 }
+
+/* ─── Hero text entrance animations ─────────────────────────────────────────── */
+@keyframes fade-in-down {
+  from { opacity: 0; transform: translateY(-18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in-down { animation: fade-in-down 0.65s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-fade-in-up   { animation: fade-in-up   0.65s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+.delay-100 { animation-delay: 100ms; }
+.delay-200 { animation-delay: 200ms; }
+.delay-400 { animation-delay: 400ms; }
+.delay-600 { animation-delay: 600ms; }
+.delay-800 { animation-delay: 800ms; }
 
 /* ─── Reduced-motion ─────────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {

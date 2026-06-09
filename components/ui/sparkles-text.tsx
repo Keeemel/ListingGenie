@@ -1,97 +1,99 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { CSSProperties, useEffect, useState } from "react";
+import { motion } from "framer-motion";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
 interface Sparkle {
   id: string;
   x: string;
   y: string;
   color: string;
-  size: number;
-  duration: number;
   delay: number;
+  scale: number;
+  lifespan: number;
 }
 
-const DEFAULT_COLORS = ["#818CF8", "#A78BFA", "#C4B5FD", "#F9A8D4", "#6366F1"];
-
-function generateSparkle(colors: string[]): Sparkle {
-  return {
-    id:       crypto.randomUUID(),
-    x:        `${Math.random() * 115 - 7}%`,
-    y:        `${Math.random() * 115 - 7}%`,
-    color:    colors[Math.floor(Math.random() * colors.length)],
-    size:     Math.random() * 10 + 7,
-    duration: Math.random() * 0.55 + 0.45,
-    delay:    Math.random() * 0.25,
-  };
-}
-
-// ── Star SVG ──────────────────────────────────────────────────────────────────
-function Star({ s }: { s: Sparkle }) {
-  return (
-    <motion.span
-      className="pointer-events-none absolute"
-      style={{ top: s.y, left: s.x }}
-      initial={{ scale: 0, opacity: 0, rotate: -20 }}
-      animate={{ scale: [0, 1, 0], opacity: [0, 1, 0], rotate: [0, 90, 180] }}
-      transition={{ duration: s.duration, delay: s.delay, ease: "easeInOut" }}
-    >
-      <svg
-        width={s.size}
-        height={s.size}
-        viewBox="0 0 10 10"
-        fill={s.color}
-        aria-hidden="true"
-      >
-        <path d="M5 0 C5 0 4.0 4.0 0 5 C4.0 6.0 5 10 5 10 C5 10 6.0 6.0 10 5 C6.0 4.0 5 0 5 0 Z" />
-      </svg>
-    </motion.span>
-  );
-}
-
-// ── Component ─────────────────────────────────────────────────────────────────
 interface SparklesTextProps {
   text: string;
   className?: string;
-  colors?: string[];
-  /** Interval between sparkle spawns in ms */
-  interval?: number;
+  sparklesCount?: number;
+  colors?: { first: string; second: string };
+  /** Inline style applied to the inner text element (use for gradient text effects) */
+  textStyle?: CSSProperties;
+}
+
+function generateStar(colors: { first: string; second: string }): Sparkle {
+  return {
+    id:       `${Math.random()}-${Date.now()}`,
+    x:        `${Math.random() * 100}%`,
+    y:        `${Math.random() * 100}%`,
+    color:    Math.random() > 0.5 ? colors.first : colors.second,
+    delay:    Math.random() * 2,
+    scale:    Math.random() * 1 + 0.3,
+    lifespan: Math.random() * 10 + 5,
+  };
+}
+
+function SparkleItem({ id, x, y, color, delay, scale }: Sparkle) {
+  return (
+    <motion.svg
+      key={id}
+      className="pointer-events-none absolute z-20"
+      initial={{ opacity: 0, left: x, top: y }}
+      animate={{ opacity: [0, 1, 0], scale: [0, scale, 0], rotate: [75, 120, 150] }}
+      transition={{ duration: 0.8, repeat: Infinity, delay }}
+      width="21"
+      height="21"
+      viewBox="0 0 21 21"
+    >
+      <path
+        d="M9.82531 0.843845C10.0553 0.215178 10.9446 0.215178 11.1746 0.843845L11.8618 2.72026C12.4006 4.19229 12.3916 6.39157 13.5 7.5C14.6084 8.60843 16.8077 8.59935 18.2797 9.13822L20.1561 9.82534C20.7858 10.0553 20.7858 10.9447 20.1561 11.1747L18.2797 11.8618C16.8077 12.4007 14.6084 12.3916 13.5 13.5C12.3916 14.6084 12.4006 16.8077 11.8618 18.2798L11.1746 20.1562C10.9446 20.7858 10.0553 20.7858 9.82531 20.1562L9.13819 18.2798C8.59932 16.8077 8.60843 14.6084 7.5 13.5C6.39157 12.3916 4.19225 12.4007 2.72023 11.8618L0.843814 11.1747C0.215148 10.9447 0.215148 10.0553 0.843814 9.82534L2.72023 9.13822C4.19225 8.59935 6.39157 8.60843 7.5 7.5C8.60843 6.39157 8.59932 4.19229 9.13819 2.72026L9.82531 0.843845Z"
+        fill={color}
+      />
+    </motion.svg>
+  );
 }
 
 export function SparklesText({
   text,
   className = "",
-  colors = DEFAULT_COLORS,
-  interval = 300,
+  sparklesCount = 10,
+  colors = { first: "#818CF8", second: "#A78BFA" },
+  textStyle,
 }: SparklesTextProps) {
   const [sparkles, setSparkles] = useState<Sparkle[]>([]);
-  const reduced = useRef(false);
 
   useEffect(() => {
-    reduced.current =
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced.current) return;
-
-    // Seed with initial sparkles
-    setSparkles(Array.from({ length: 6 }, () => generateSparkle(colors)));
+    setSparkles(Array.from({ length: sparklesCount }, () => generateStar(colors)));
 
     const id = setInterval(() => {
-      setSparkles((prev) => [...prev.slice(1), generateSparkle(colors)]);
-    }, interval);
+      setSparkles((prev) =>
+        prev.map((s) =>
+          s.lifespan <= 0
+            ? generateStar(colors)
+            : { ...s, lifespan: s.lifespan - 0.1 }
+        )
+      );
+    }, 100);
 
     return () => clearInterval(id);
-  }, [colors, interval]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colors.first, colors.second, sparklesCount]);
 
   return (
-    <span className={`relative inline-block ${className}`}>
-      <AnimatePresence>
-        {sparkles.map((s) => (
-          <Star key={s.id} s={s} />
-        ))}
-      </AnimatePresence>
-      <span className="relative">{text}</span>
+    <span
+      className={`relative inline-block ${className}`}
+      style={
+        {
+          "--sparkles-first-color": colors.first,
+          "--sparkles-second-color": colors.second,
+        } as CSSProperties
+      }
+    >
+      {sparkles.map((s) => (
+        <SparkleItem key={s.id} {...s} />
+      ))}
+      <strong style={{ fontWeight: "inherit", ...textStyle }}>{text}</strong>
     </span>
   );
 }
