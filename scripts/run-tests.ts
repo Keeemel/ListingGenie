@@ -9,7 +9,8 @@ import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { runOnPageAudit, computeGrade } from "../lib/auditRules";
 import { generateKeywordGaps } from "../lib/keywordGaps";
-import type { Issue, KeywordGaps, IssueStatus } from "../types/audit";
+import { heuristicValidate } from "../lib/validateInput";
+import type { Issue, KeywordGaps, IssueStatus, Platform } from "../types/audit";
 
 // ── Load .env.local before any function reads process.env ────────────────────
 // (keywordGaps reads GEMINI_API_KEY lazily inside generateKeywordGaps(), so
@@ -43,7 +44,9 @@ interface TestCase {
   title: string;
   keyword: string;
   description: string;
+  platform: Platform;
   runGemini: boolean;
+  expectValidationFail?: boolean; // heuristic should reject this input
   expect: {
     scoreMin?: number;
     scoreMax?: number;
@@ -71,6 +74,7 @@ const CASES: TestCase[] = [
     title: "Water Bottle",
     keyword: "insulated water bottle",
     description: "Nice bottle. Keeps drinks cold. Buy now.",
+    platform: "other",
     runGemini: false,
     expect: {
       grade: "D",
@@ -100,6 +104,7 @@ const CASES: TestCase[] = [
 • Sweat-free exterior with a comfortable grip
 • 750ml capacity, fits most car cup holders
 Whether you're on the trail or at the office, this insulated water bottle keeps every sip at the perfect temperature. Easy to clean, built to last, backed by a lifetime guarantee.`,
+    platform: "other",
     runGemini: false,
     expect: {
       scoreMin: 80,
@@ -123,6 +128,7 @@ Whether you're on the trail or at the office, this insulated water bottle keeps 
     keyword: "insulated water bottle",
     description:
       "This insulated water bottle is the best insulated water bottle. Buy this insulated water bottle because our insulated water bottle is a great insulated water bottle. Insulated water bottle for everyone.",
+    platform: "other",
     runGemini: false,
     expect: {
       scoreMax: 45, // hard cap applied by engine when stuffing fires
@@ -140,6 +146,7 @@ Whether you're on the trail or at the office, this insulated water bottle keeps 
     keyword: "lavender soy candle",
     description:
       "A relaxing scented candle made from natural soy wax. Burns for about 45 hours with a calming fragrance. Perfect for your living room or as a gift.",
+    platform: "other",
     runGemini: true,
     expect: {
       grade: "D",
@@ -163,6 +170,7 @@ Whether you're on the trail or at the office, this insulated water bottle keeps 
     keyword: "wireless earbuds",
     description:
       "These wireless earbuds are honestly the kind of product that you will want to use every single day because they combine a really long battery life with a very comfortable fit and a sound quality that works well for music podcasts calls and gaming all at once without ever needing to be adjusted or recharged constantly throughout the day which is something that a lot of other earbuds simply cannot offer to their customers in the same way.",
+    platform: "other",
     runGemini: false,
     expect: {
       scoreMin: 45,
@@ -194,6 +202,7 @@ Whether you're on the trail or at the office, this insulated water bottle keeps 
 • 750ml size that still fits most car cup holders
 The wide opening makes it easy to drop in ice cubes and to clean by hand. A slim profile slides into side pockets and backpack sleeves without any trouble. It comes in five colors, so you can match it to your gear and your mood.
 We stand behind the build with a lifetime guarantee. If anything goes wrong, we replace it, no questions asked. Order today and feel the difference on your very first morning.`,
+    platform: "other",
     runGemini: false,
     expect: {
       scoreMin: 100,
@@ -210,6 +219,120 @@ We stand behind the build with a lifetime guarantee. If anything goes wrong, we 
       ],
     },
   },
+  // ── CAS 7 — Amazon promo language ─────────────────────────────────────────
+  {
+    id: "amazon-promo",
+    label: "CAS 7 — amazon-promo (Amazon title with 'best' → promoLanguage FAIL + score cap 70)",
+    title: "Best Stainless Steel Insulated Water Bottle 750ml – BPA Free, Leakproof, Double Wall Vacuum",
+    keyword: "insulated water bottle",
+    description: `Stay hydrated all day with our double-wall insulated water bottle, built for work, gym, and outdoor adventures.
+• Keeps drinks cold for 24 hours and hot for 12 hours
+• Leakproof lid — toss it in your bag without worry
+• Premium 18/8 stainless steel, BPA-free
+• Sweat-free exterior with comfortable grip
+• 750ml capacity, fits most car cup holders
+Designed for commuters, hikers, and fitness enthusiasts, this insulated water bottle combines durability and performance. Easy to clean and backed by a lifetime guarantee.`,
+    platform: "amazon",
+    runGemini: false,
+    expect: {
+      scoreMax: 70,
+      rules: [
+        { rule: "promoLanguage", status: "fail" },
+      ],
+    },
+  },
+
+  // ── CAS 8 — eBay title too long ────────────────────────────────────────────
+  {
+    id: "ebay-long-title",
+    label: "CAS 8 — ebay-long-title (eBay title > 80 chars → titleLength FAIL)",
+    title: "Apple AirPods Pro 2nd Generation MagSafe USB-C Charging Case Noise Cancelling Wireless Earbuds 2024",
+    keyword: "airpods pro",
+    description: `Apple AirPods Pro (2nd generation) deliver Active Noise Cancellation and Transparency mode so you can listen, talk, and connect in a whole new way.
+• Active Noise Cancellation blocks outside noise
+• Transparency mode lets you hear the world around you
+• Adaptive Audio mixes Noise Cancellation and Transparency
+• Personalized Spatial Audio with dynamic head tracking
+• H2 chip for smarter, faster performance
+Comes with MagSafe USB-C Charging Case. Compatible with iPhone, iPad, and Mac. Battery life: up to 6 hours (30 hours with case).`,
+    platform: "ebay",
+    runGemini: false,
+    expect: {
+      rules: [
+        { rule: "titleLength", status: "fail" },
+      ],
+    },
+  },
+
+  // ── CAS 9 — Etsy keyword not front-loaded ─────────────────────────────────
+  {
+    id: "etsy-no-frontload",
+    label: "CAS 9 — etsy-no-frontload (Etsy: main keyword buried in title → keywordFrontLoad WARN/FAIL)",
+    title: "Handmade Gift for Her – Lavender Soy Candle in Glass Jar",
+    keyword: "lavender soy candle",
+    description: `A beautiful handmade lavender soy candle, perfect as a gift for her. Each candle is hand-poured using 100% natural soy wax and pure lavender essential oil. The clean-burning formula means no toxins, no soot — just a calming lavender scent that fills the room.
+• 100% natural soy wax — burns cleaner and longer than paraffin
+• Pure lavender essential oil — not fragrance oil
+• Reusable glass jar with minimalist label
+• Burns for 40–50 hours
+• Available in 4 oz and 8 oz sizes
+Makes an ideal birthday, anniversary, or self-care gift. Ship within 2–3 business days.`,
+    platform: "etsy",
+    runGemini: false,
+    expect: {
+      rules: [
+        { rule: "keywordFrontLoad", status: "warn" },
+      ],
+    },
+  },
+
+  // ── CAS 11 — garbage: caca ─────────────────────────────────────────────────
+  {
+    id: "garbage-caca",
+    label: "CAS 11 — garbage-caca (heuristic must reject 'caca')",
+    title: "caca",
+    keyword: "",
+    description: "caca",
+    platform: "other",
+    runGemini: false,
+    expectValidationFail: true,
+    expect: { rules: [] },
+  },
+
+  // ── CAS 12 — garbage: asdf keyboard mash ──────────────────────────────────
+  {
+    id: "garbage-asdf",
+    label: "CAS 12 — garbage-asdf (heuristic must reject keyboard mash)",
+    title: "asdf asdf asdf",
+    keyword: "",
+    description: "asdf asdf asdf",
+    platform: "other",
+    runGemini: false,
+    expectValidationFail: true,
+    expect: { rules: [] },
+  },
+
+  // ── CAS 10 — Shopify no CTA ────────────────────────────────────────────────
+  {
+    id: "shopify-no-cta",
+    label: "CAS 10 — shopify-no-cta (Shopify: description has no call-to-action → shopifyMetaDesc WARN)",
+    title: "Linen Throw Pillow Cover 18x18",
+    keyword: "linen pillow cover",
+    description: `This linen throw pillow cover is made from 100% European flax linen, woven to a medium weight that softens after every wash. The envelope-style closure fits standard 18x18 inserts and keeps the pillow secure without a zipper.
+• 100% European flax linen — OEKO-TEX certified
+• Envelope closure, no zipper required
+• Machine washable, tumble dry low
+• Pre-washed for a lived-in, soft feel
+• Available in 8 neutral tones to suit any room
+The textured weave adds warmth and depth to sofas, armchairs, and beds. Each cover is cut and sewn in Portugal from single-origin linen.`,
+    platform: "shopify",
+    runGemini: false,
+    expect: {
+      rules: [
+        { rule: "shopifyMetaDesc", status: "warn" },
+      ],
+    },
+  },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -221,15 +344,16 @@ async function callGeminiWithRetry(
   title: string,
   description: string,
   keyword: string,
+  platform: Platform,
   maxRetries = 2
 ): Promise<KeywordGaps> {
-  let result = await generateKeywordGaps(title, description, keyword);
+  let result = await generateKeywordGaps(title, description, keyword, platform);
   let attempt = 0;
   while (result.error?.toLowerCase().includes("rate limit") && attempt < maxRetries) {
     attempt++;
     console.log(`\n    ⏳ Rate limit — waiting 60 s (retry ${attempt}/${maxRetries})…`);
     await sleep(60_000);
-    result = await generateKeywordGaps(title, description, keyword);
+    result = await generateKeywordGaps(title, description, keyword, platform);
   }
   return result;
 }
@@ -347,7 +471,8 @@ function generateReport(
   // ── Summary ───────────────────────────────────────────────────────────────
   lines.push(`## Summary`);
   lines.push(``);
-  lines.push(`**${passCount}/6 cases conform** — ${warnCount} ⚠️ minor discrepancy, ${failCount} ❌ failure`);
+  const total = results.length;
+  lines.push(`**${passCount}/${total} cases conform** — ${warnCount} ⚠️ minor discrepancy, ${failCount} ❌ failure`);
   lines.push(``);
   lines.push(`| # | Case | Score | Grade | Expected | Verdict |`);
   lines.push(`|--:|------|------:|:-----:|----------|:-------:|`);
@@ -510,10 +635,24 @@ async function main() {
   let geminiCallIdx = 0;
 
   for (const [i, tc] of CASES.entries()) {
-    process.stdout.write(`  [${i + 1}/6] ${tc.id.padEnd(15)}`);
+    process.stdout.write(`  [${i + 1}/${CASES.length}] ${tc.id.padEnd(20)}`);
+
+    // ── Validation-only test cases ──────────────────────────────────────────
+    if (tc.expectValidationFail) {
+      const validation = heuristicValidate(tc.title, tc.description);
+      const rejected = !validation.valid;
+      const verdict: Verdict = rejected ? "✅" : "❌";
+      const discrepancies = rejected
+        ? []
+        : [`Expected heuristic to reject this input, but got valid: true`];
+      console.log(`heuristic=${rejected ? "REJECTED" : "accepted"}  ${verdict}`);
+      for (const d of discrepancies) console.log(`           ⤷ ${d}`);
+      results.push({ tc, score: 0, grade: "D", issues: [], gaps: null, verdict, discrepancies });
+      continue;
+    }
 
     // On-page audit (synchronous, no external calls)
-    const { score, issues } = runOnPageAudit(tc.title, tc.description, tc.keyword);
+    const { score, issues } = runOnPageAudit(tc.title, tc.description, tc.keyword, tc.platform);
     const grade = computeGrade(score);
 
     // Gemini keyword gaps (throttled: 2.5 s between calls)
@@ -522,7 +661,7 @@ async function main() {
       if (geminiCallIdx > 0) await sleep(4000);
       process.stdout.write("[Gemini…] ");
       gaps = hasKey
-        ? await callGeminiWithRetry(tc.title, tc.description, tc.keyword)
+        ? await callGeminiWithRetry(tc.title, tc.description, tc.keyword, tc.platform)
         : { suggestedKeywords: [], skipped: true };
       geminiCallIdx++;
     }
@@ -548,7 +687,7 @@ async function main() {
 
   console.log(`\n  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   console.log(
-    `  ${passCount} ✅  ${warnCount} ⚠️  ${failCount} ❌   (${passCount}/6 conform)`
+    `  ${passCount} ✅  ${warnCount} ⚠️  ${failCount} ❌   (${passCount}/${CASES.length} conform)`
   );
   console.log(`  Report → TEST_REPORT.md`);
   console.log(`  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
